@@ -1,0 +1,34 @@
+[package]                                                                   # <- секция информации и проекте
+name = "async_quotation_simulation"                                         # <- имя проекта (обязательное поле)
+version = "0.0.1"                                                           # <- текущая версия проекта
+edition = "2024"                                                            # <- версия языка, используемая компилятором
+description = "Короткое описание"                                           # <- описание проекта
+authors = ["slendersold@mail.ru"]                                           # <- информация об авторах проекта
+license = "MIT OR Apache-2.0"                                               # <- тип лицензии
+homepage = "https://practicum.yandex.ru/learn/middle-rust-blockchain"       # <- домашняя страница проекта
+repository = "https://github.com/slendersold/async_quotation_simulation"    # <- репозиторий проекта
+keywords = ["async", "client", "server"]                                    # <- список ключевых слов, описывающих проект
+categories = ["command-line-utilities"]                                     # <- список категорий проекта
+default-run = "client"     
+
+[dependencies]                          # <- секция основных зависимостей
+clap = { version = "4.5", features = ["derive"] }
+# serde = "1.0"                           # <- зависимость с указанием версии (SemVer)
+# my-local-crate = { path = "./local" }   # <- пример локальной зависимости
+
+# [dev-dependencies]                      # <- секция зависимостей тестов/бенчмарков
+# tempdir = "3.0" 
+
+# [build-dependencies]                    # <- секция зависимостей скриптов сборки
+# cc = "1.0"                              
+
+# [profile.release]                       # <- секция профиля сборки
+# opt-level = 'z' 
+
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"
+
+[lib]
+name = "utils"
+path = "src/lib.rs"
