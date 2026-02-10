@@ -1,20 +1,20 @@
-[package]                                                                   # <- секция информации и проекте
-name = "async_quotation_simulation"                                         # <- имя проекта (обязательное поле)
-version = "0.0.1"                                                           # <- текущая версия проекта
-edition = "2024"                                                            # <- версия языка, используемая компилятором
-description = "Короткое описание"                                           # <- описание проекта
-authors = ["slendersold@mail.ru"]                                           # <- информация об авторах проекта
-license = "MIT OR Apache-2.0"                                               # <- тип лицензии
-homepage = "https://practicum.yandex.ru/learn/middle-rust-blockchain"       # <- домашняя страница проекта
-repository = "https://github.com/slendersold/async_quotation_simulation"    # <- репозиторий проекта
-keywords = ["async", "client", "server"]                                    # <- список ключевых слов, описывающих проект
-categories = ["command-line-utilities"]                                     # <- список категорий проекта
-default-run = "client"     
+﻿[package]
+name = "async_quotation_simulation"
+version = "0.0.1"                                                    
+edition = "2024"
+description = "client and server app"
+authors = ["slendersold@mail.ru"]
+license = "MIT OR Apache-2.0"
+homepage = "https://practicum.yandex.ru/learn/middle-rust-blockchain"
+repository = "https://github.com/slendersold/async_quotation_simulation"
+keywords = ["async", "client", "server"]
+categories = ["command-line-utilities"]
+default-run = "client"
 
-[dependencies]                          # <- секция основных зависимостей
-clap = { version = "4.5", features = ["derive"] }
-# serde = "1.0"                           # <- зависимость с указанием версии (SemVer)
-# my-local-crate = { path = "./local" }   # <- пример локальной зависимости
+[dependencies]
+clap = { version = "4.5", features = ["derive"], optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
 
 # [dev-dependencies]                      # <- секция зависимостей тестов/бенчмарков
 # tempdir = "3.0" 
@@ -24,6 +24,13 @@ clap = { version = "4.5", features = ["derive"] }
 
 # [profile.release]                       # <- секция профиля сборки
 # opt-level = 'z' 
+
+[features]
+# CLI is enabled by default; it pulls in clap.
+default = ["cli"]
+cli = ["dep:clap"]
+serde = ["dep:serde"]
+crossbeam = ["dep:crossbeam-channel"]
 
 [[bin]]
 name = "client"
