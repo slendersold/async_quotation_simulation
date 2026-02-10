@@ -6,6 +6,5 @@ pub mod model;
 pub mod net;
 pub mod protocol;
 pub mod server;
-pub mod tickers;
 
 pub use crate::error::{Error, Result};
