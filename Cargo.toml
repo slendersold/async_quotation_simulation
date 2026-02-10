@@ -29,6 +29,10 @@ clap = { version = "4.5", features = ["derive"] }
 name = "client"
 path = "src/bin/client.rs"
 
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
 [lib]
 name = "utils"
 path = "src/lib.rs"
