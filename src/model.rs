@@ -1,4 +1,4 @@
-﻿//! Модель котировки и (де)сериализация: структуры данных и форматы передачи.
+//! Модель котировки и (де)сериализация: структуры данных и форматы передачи.
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StockQuote {
@@ -37,5 +37,41 @@ impl StockQuote {
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         let s = std::str::from_utf8(bytes).ok()?;
         Self::from_string(s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roundtrip_to_string_from_string() {
+        let q = StockQuote {
+            ticker: "TEST".to_string(),
+            price: 123.45,
+            volume: 999,
+            timestamp: 1_700_000_000_000,
+        };
+        let s = q.to_string();
+        let back = StockQuote::from_string(&s).expect("parse");
+        assert_eq!(back, q);
+    }
+
+    #[test]
+    fn from_string_rejects_wrong_field_count() {
+        assert!(StockQuote::from_string("a|b|c").is_none());
+    }
+
+    #[test]
+    fn roundtrip_bytes() {
+        let q = StockQuote {
+            ticker: "X".to_string(),
+            price: 1.0,
+            volume: 2,
+            timestamp: 3,
+        };
+        let bytes = q.to_bytes();
+        let back = StockQuote::from_bytes(&bytes).expect("parse bytes");
+        assert_eq!(back, q);
     }
 }
