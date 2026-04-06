@@ -43,6 +43,15 @@ impl StockQuote {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::generator::QuoteGenerator;
+    use std::time::Duration;
+
+    static DEMO_TICKERS: &[&str] = &["AAPL", "ZZZ"];
+
+    /// `ticker|price|volume|timestamp` в UTF-8 через `format!` — контроль для [`StockQuote::to_bytes`].
+    fn wire_line_bytes_via_format(q: &StockQuote) -> Vec<u8> {
+        format!("{}|{}|{}|{}", q.ticker, q.price, q.volume, q.timestamp).into_bytes()
+    }
 
     #[test]
     fn roundtrip_to_string_from_string() {
@@ -73,5 +82,77 @@ mod tests {
         let bytes = q.to_bytes();
         let back = StockQuote::from_bytes(&bytes).expect("parse bytes");
         assert_eq!(back, q);
+    }
+
+    #[test]
+    fn serialization_to_bytes_matches_string_line() {
+        let samples = [
+            StockQuote {
+                ticker: "AAPL".into(),
+                price: 123.45,
+                volume: 999,
+                timestamp: 1_700_000_000_000,
+            },
+            StockQuote {
+                ticker: "X".into(),
+                price: 1.0,
+                volume: 2,
+                timestamp: 3,
+            },
+            StockQuote {
+                ticker: "ММК".into(),
+                price: 50.0,
+                volume: 1,
+                timestamp: 0,
+            },
+            StockQuote {
+                ticker: "WEIRD|SYM".into(),
+                price: f64::EPSILON,
+                volume: u32::MAX,
+                timestamp: u64::MAX,
+            },
+        ];
+        for q in samples {
+            assert_eq!(
+                q.to_bytes(),
+                wire_line_bytes_via_format(&q),
+                "to_bytes должен совпадать с UTF-8 строки to_string / format!"
+            );
+            assert_eq!(
+                q.to_string(),
+                String::from_utf8(q.to_bytes()).unwrap(),
+                "to_string и UTF-8(to_bytes) должны совпадать"
+            );
+        }
+    }
+
+    #[test]
+    fn serialization_generator_quotes_match_string_line() {
+        let mut generator =
+            QuoteGenerator::new_with_seed_interval_for(DEMO_TICKERS, 0xC0FFEE, Duration::ZERO);
+        for _ in 0..5 {
+            generator.advance_batch();
+            for ticker in ["AAPL", "ZZZ"] {
+                let q = generator.last_batch_quote(ticker).expect("ticker in demo list");
+                assert_eq!(q.to_bytes(), wire_line_bytes_via_format(&q));
+                assert_eq!(
+                    q.to_string(),
+                    String::from_utf8(wire_line_bytes_via_format(&q)).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn serialization_from_bytes_roundtrip_wire_line() {
+        let q = StockQuote {
+            ticker: "TSLA".into(),
+            price: 200.125,
+            volume: 42,
+            timestamp: 99,
+        };
+        let line = wire_line_bytes_via_format(&q);
+        assert_eq!(StockQuote::from_bytes(&line), Some(q.clone()));
+        assert_eq!(StockQuote::from_string(&String::from_utf8(line).unwrap()), Some(q));
     }
 }
