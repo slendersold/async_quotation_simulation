@@ -34,6 +34,20 @@ pub fn receive_quotes_with_ping_on_socket(
     run_for: Duration,
     ping_interval: Duration,
 ) -> io::Result<Vec<StockQuote>> {
+    let mut quotes = Vec::new();
+    receive_quotes_with_ping_on_socket_with_cb(socket, run_for, ping_interval, |q| {
+        quotes.push(q.clone());
+    })?;
+    Ok(quotes)
+}
+
+/// То же, что [`receive_quotes_with_ping_on_socket`], но каждая котировка отдаётся в `on_quote` (например для CLI).
+pub fn receive_quotes_with_ping_on_socket_with_cb(
+    socket: UdpSocket,
+    run_for: Duration,
+    ping_interval: Duration,
+    mut on_quote: impl FnMut(&StockQuote),
+) -> io::Result<()> {
     socket.set_read_timeout(Some(UDP_READ_TIMEOUT))?;
 
     let server_addr: ServerAddrCell = Arc::new(Mutex::new(None));
@@ -48,7 +62,6 @@ pub fn receive_quotes_with_ping_on_socket(
     );
 
     let mut buf = vec![0u8; UDP_RECV_BUF];
-    let mut quotes = Vec::new();
     let deadline = Instant::now() + run_for;
 
     while Instant::now() < deadline {
@@ -67,7 +80,7 @@ pub fn receive_quotes_with_ping_on_socket(
                 }
                 if let Some(q) = StockQuote::from_string(text) {
                     let _ = server_addr.lock().unwrap().get_or_insert(src);
-                    quotes.push(q);
+                    on_quote(&q);
                 }
             }
             Err(ref e)
@@ -85,5 +98,60 @@ pub fn receive_quotes_with_ping_on_socket(
 
     stop.store(true, Ordering::SeqCst);
     let _ = ping_handle.join();
-    Ok(quotes)
+    Ok(())
+}
+
+/// Приём до внешнего `stop` (например Ctrl+C): тот же `PING`, общий флаг с фоновым потоком.
+pub fn receive_quotes_with_ping_until_stop(
+    socket: UdpSocket,
+    ping_interval: Duration,
+    stop: Arc<AtomicBool>,
+    mut on_quote: impl FnMut(&StockQuote),
+) -> io::Result<()> {
+    socket.set_read_timeout(Some(UDP_READ_TIMEOUT))?;
+
+    let server_addr: ServerAddrCell = Arc::new(Mutex::new(None));
+    let pinger_socket = socket.try_clone()?;
+    let ping_handle = ping::spawn_udp_ping_loop(
+        pinger_socket,
+        Arc::clone(&server_addr),
+        ping_interval,
+        Arc::clone(&stop),
+    );
+
+    let mut buf = vec![0u8; UDP_RECV_BUF];
+    while !stop.load(Ordering::SeqCst) {
+        match socket.recv_from(&mut buf) {
+            Ok((n, src)) => {
+                let Ok(text) = std::str::from_utf8(&buf[..n]) else {
+                    continue;
+                };
+                let text = text.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                match Command::parse(text) {
+                    Command::Pong | Command::Ping => continue,
+                    _ => {}
+                }
+                if let Some(q) = StockQuote::from_string(text) {
+                    let _ = server_addr.lock().unwrap().get_or_insert(src);
+                    on_quote(&q);
+                }
+            }
+            Err(ref e)
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
+            {
+                continue;
+            }
+            Err(e) => {
+                stop.store(true, Ordering::SeqCst);
+                let _ = ping_handle.join();
+                return Err(e);
+            }
+        }
+    }
+
+    let _ = ping_handle.join();
+    Ok(())
 }
