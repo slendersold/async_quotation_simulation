@@ -216,6 +216,14 @@ impl QuoteGenerator {
             .map(|q| q.timestamp)
     }
 
+    /// Все котировки последнего пакета в порядке [`Self::ticker_order`].
+    pub fn last_batch_quotes(&self) -> Vec<StockQuote> {
+        self.ticker_order
+            .iter()
+            .filter_map(|t| self.current_batch.get(t).cloned())
+            .collect()
+    }
+
     fn rebuild_batch(&mut self, timestamp: u64) {
         self.current_batch.clear();
         for ticker in &self.ticker_order {
@@ -345,5 +353,16 @@ mod tests {
             (p1 - p0).abs() > 1e-9,
             "ожидали шаг блуждания между пакетами"
         );
+    }
+
+    #[test]
+    fn last_batch_quotes_order_matches_ticker_order() {
+        let mut generator =
+            QuoteGenerator::new_with_seed_interval_for(DEMO_TICKERS, 1, Duration::ZERO);
+        generator.advance_batch();
+        let batch = generator.last_batch_quotes();
+        assert_eq!(batch.len(), DEMO_TICKERS.len());
+        assert_eq!(batch[0].ticker, "AAPL");
+        assert_eq!(batch[1].ticker, "ZZZ");
     }
 }
