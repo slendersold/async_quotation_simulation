@@ -5,11 +5,12 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
+use log::error;
 use crate::model::StockQuote;
 use super::generator::QuoteGenerator;
 use super::tickers;
 
-/// Подписчик получает только котировки по своему множеству тикеров.
+/// Подписчик: фильтр по множеству тикеров и канал отправки батчей.
 struct Subscriber {
     tickers: HashSet<String>,
     tx: mpsc::Sender<Vec<StockQuote>>,
@@ -32,7 +33,7 @@ impl QuoteHub {
         Self::spawn_generator_thread_for(seed, emit_interval, list)
     }
 
-    /// То же, с явным статическим списком тикеров (тесты).
+    /// Запуск с заданным статическим списком тикеров.
     pub fn spawn_generator_thread_for(
         seed: u64,
         emit_interval: Duration,
@@ -48,7 +49,13 @@ impl QuoteHub {
             loop {
                 generator.advance_batch();
                 let batch = generator.last_batch_quotes();
-                let subs = inner_gen.subscribers.lock().unwrap();
+                let subs = match inner_gen.subscribers.lock() {
+                    Ok(g) => g,
+                    Err(e) => {
+                        error!("quote hub subscribers mutex poisoned: {e}");
+                        e.into_inner()
+                    }
+                };
                 for sub in subs.iter() {
                     let filtered: Vec<StockQuote> = batch
                         .iter()
@@ -69,11 +76,14 @@ impl QuoteHub {
     pub fn subscribe(&self, tickers: Vec<String>) -> mpsc::Receiver<Vec<StockQuote>> {
         let (tx, rx) = mpsc::channel();
         let set: HashSet<String> = tickers.into_iter().collect();
-        self.inner
-            .subscribers
-            .lock()
-            .unwrap()
-            .push(Subscriber { tickers: set, tx });
+        let mut subs = match self.inner.subscribers.lock() {
+            Ok(g) => g,
+            Err(e) => {
+                error!("subscribe: mutex poisoned, recovering: {e}");
+                e.into_inner()
+            }
+        };
+        subs.push(Subscriber { tickers: set, tx });
         rx
     }
 }

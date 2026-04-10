@@ -7,14 +7,17 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use log::warn;
 use crate::model::StockQuote;
 use crate::net;
 use crate::protocol::{Command, DEFAULT_PING_TIMEOUT_SECS, PONG_COMMAND};
 
 use super::keepalive;
 
-const UDP_IO_BUF: usize = 512;
+const UDP_IO_BUF: usize = 2048;
+/// Таймаут `recv` на канале котировок; совмещён с проверкой keep-alive в основном цикле.
 const QUOTE_RECV_TIMEOUT: Duration = Duration::from_millis(100);
+/// Таймаут `recv_from` для входящих UDP `PING`.
 const PING_RECV_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Запускает поток: шлёт котировки на `dest`, слушает `PING` на том же UDP-сокете, отвечает `PONG`.
@@ -28,7 +31,10 @@ pub fn spawn_udp_stream_worker(
     thread::spawn(move || {
         let socket = match net::udp_bind("0.0.0.0:0") {
             Ok(s) => s,
-            Err(_) => return,
+            Err(e) => {
+                warn!("udp bind for stream to {dest}: {e}");
+                return;
+            }
         };
         let _ = socket.set_read_timeout(Some(PING_RECV_TIMEOUT));
 
@@ -37,7 +43,10 @@ pub fn spawn_udp_stream_worker(
 
         let recv_sock = match socket.try_clone() {
             Ok(s) => s,
-            Err(_) => return,
+            Err(e) => {
+                warn!("udp try_clone for ping recv: {e}");
+                return;
+            }
         };
         let last_ping_recv = Arc::clone(&last_ping);
         let stop_recv = Arc::clone(&stop);
@@ -95,6 +104,14 @@ pub fn spawn_udp_stream_worker(
 }
 
 fn send_quote_datagram(socket: &std::net::UdpSocket, dest: SocketAddr, q: &StockQuote) {
-    let line = q.to_string();
-    let _ = net::udp_send_all(socket, line.as_bytes(), dest);
+    let line = match q.to_json_line() {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("quote json encode: {e}");
+            return;
+        }
+    };
+    if let Err(e) = net::udp_send_all(socket, line.as_bytes(), dest) {
+        warn!("udp send quote to {dest}: {e}");
+    }
 }

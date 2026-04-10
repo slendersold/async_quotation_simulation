@@ -1,6 +1,12 @@
 use clap::Parser;
 use utils::server::run::start_tcp_command_server;
 
+fn init_logging() {
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .try_init();
+}
+
 #[derive(Parser)]
 #[command(name = "server", about = "Quote generator: TCP commands + UDP streaming")]
 struct ServerCli {
@@ -16,6 +22,7 @@ struct ServerCli {
 }
 
 fn main() {
+    init_logging();
     let cli = ServerCli::parse();
     if let Err(e) = start_tcp_command_server(&cli.listen, cli.emit_interval_ms, cli.seed) {
         eprintln!("{e}");

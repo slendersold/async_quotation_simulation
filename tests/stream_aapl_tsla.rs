@@ -1,4 +1,4 @@
-//! Интеграция: `STREAM udp://127.0.0.1:34254 AAPL,TSLA` — UDP-поток ~1 с, keep-alive через PING.
+//! Команда `STREAM` на фиксированный UDP-адрес, подписка AAPL/TSLA, keep-alive PING.
 
 use std::io::BufReader;
 use std::net::SocketAddr;
@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use utils::client::{tcp_command, udp_recv};
 use utils::net;
-use utils::protocol::Command;
+use utils::protocol::{Command, RESPONSE_OK_LINE};
 use utils::server::registry::QuoteHub;
 use utils::server::streaming;
 use utils::server::tcp_accept;
@@ -45,6 +45,7 @@ fn integration_stream_udp_127_0_0_1_34254_aapl_tsla_one_second() {
         assert_eq!(udp_addr.port(), UDP_PORT);
         assert!(tickers.contains(&"AAPL".to_string()));
         assert!(tickers.contains(&"TSLA".to_string()));
+        net::write_command_line(&mut stream, RESPONSE_OK_LINE).expect("write OK");
         let rx = hub_srv.subscribe(tickers);
         let h = streaming::spawn_udp_stream_worker(udp_addr, rx, stop_srv);
         *slot.lock().unwrap() = Some(h);
@@ -54,14 +55,14 @@ fn integration_stream_udp_127_0_0_1_34254_aapl_tsla_one_second() {
     let client = thread::spawn(move || {
         let sock = net::udp_bind(udp_addr).expect("bind client UDP before STREAM");
         let mut tcp = tcp_command::connect(tcp_addr).expect("tcp connect");
-        tcp_command::send_command(
+        tcp_command::send_stream_expect_response(
             &mut tcp,
             &Command::Stream {
                 udp_addr,
                 tickers: vec!["AAPL".into(), "TSLA".into()],
             },
         )
-        .expect("send STREAM");
+        .expect("send STREAM and OK");
         drop(tcp);
         udp_recv::receive_quotes_with_ping_on_socket(sock, run, ping_interval)
             .expect("UDP recv + ping")

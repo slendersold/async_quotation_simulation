@@ -1,16 +1,17 @@
 //! Текстовый протокол команд между клиентом и сервером (стриминг котировок по UDP, keep-alive).
 //!
-//! Чтение строки с TCP и разбор адреса в `STREAM` согласованы с [`crate::net`] ([`crate::net::read_command_line`], [`crate::net::parse_addr`], [`crate::net::MAX_COMMAND_LINE_BYTES`]).
+//! Разбор строки команды и адреса в `STREAM` использует [`crate::net::read_command_line`],
+//! [`crate::net::parse_addr`], лимит [`crate::net::MAX_COMMAND_LINE_BYTES`].
 //!
-//! Формат команды STREAM (от клиента серверу):
+//! Команда STREAM (клиент → сервер, TCP):
 //! ```text
 //! STREAM udp://127.0.0.1:12345 AAPL,TSLA
 //! ```
-//! Формат Ping (от клиента серверу, по UDP):
+//! Ping (клиент → сервер, UDP):
 //! ```text
 //! PING
 //! ```
-//! Формат Pong (от сервера клиенту, по UDP):
+//! Pong (сервер → клиент, UDP):
 //! ```text
 //! PONG
 //! ```
@@ -22,7 +23,7 @@ use std::net::SocketAddr;
 /// Представление команд протокола стриминга.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    /// Запустить UDP-стрим котировок для определённых тикеров на адрес.
+    /// UDP-стрим котировок на адрес для заданных тикеров.
     /// `STREAM udp://ip:port TICKER1,TICKER2,...`
     Stream {
         udp_addr: SocketAddr,
@@ -37,7 +38,7 @@ pub enum Command {
 }
 
 impl Command {
-    /// Читает одну строку команды из потока (как после [`net::read_command_line`]) и парсит её.
+    /// Читает одну строку команды из потока ([`net::read_command_line`]) и парсит её.
     pub fn read_from(reader: &mut impl BufRead) -> io::Result<Option<Self>> {
         match net::read_command_line(reader, net::MAX_COMMAND_LINE_BYTES)? {
             None => Ok(None),
@@ -47,7 +48,7 @@ impl Command {
 
     /// Парсит строку командного протокола в [`Command`].
     ///
-    /// Строки длиннее [`net::MAX_COMMAND_LINE_BYTES`] байт считаются некорректными (как при чтении по TCP).
+    /// Строки длиннее [`net::MAX_COMMAND_LINE_BYTES`] байт считаются некорректными.
     pub fn parse(command_str: &str) -> Self {
         if command_str.len() > net::MAX_COMMAND_LINE_BYTES {
             return Command::Unknown("command line exceeds MAX_COMMAND_LINE_BYTES".to_string());
@@ -81,7 +82,7 @@ impl Command {
         Command::Unknown(trimmed.to_string())
     }
 
-    /// Форматирует команду в строку (отправка клиенту или логи).
+    /// Строковое представление команды для передачи по каналу.
     pub fn to_string(&self) -> String {
         match self {
             Command::Ping => "PING".to_string(),
@@ -96,8 +97,31 @@ impl Command {
 
 /// Таймаут ожидания Ping от клиента перед остановкой стрима (секунды).
 pub const DEFAULT_PING_TIMEOUT_SECS: u64 = 5;
+/// Интервал отправки Ping с клиента (секунды), значение по умолчанию.
+pub const DEFAULT_PING_INTERVAL_SECS: u64 = 2;
 pub const PING_COMMAND: &str = "PING";
 pub const PONG_COMMAND: &str = "PONG";
+
+/// Ответ сервера на успешный `STREAM` (одна строка по TCP).
+pub const RESPONSE_OK_LINE: &str = "OK";
+
+/// Строка ошибки для клиента: `ERR <сообщение>`.
+pub fn format_err_line(message: &str) -> String {
+    format!("ERR {}", message.trim())
+}
+
+/// Разбор ответа сервера после `STREAM`: `OK` или `ERR …`.
+pub fn parse_stream_response_line(line: &str) -> Result<(), String> {
+    let t = line.trim();
+    if t == RESPONSE_OK_LINE {
+        return Ok(());
+    }
+    const ERR_PREFIX: &str = "ERR ";
+    if t.len() >= ERR_PREFIX.len() && t[..ERR_PREFIX.len()].eq_ignore_ascii_case(ERR_PREFIX) {
+        return Err(t[ERR_PREFIX.len()..].trim().to_string());
+    }
+    Err(format!("unexpected server response: {t}"))
+}
 
 #[cfg(test)]
 mod tests {
@@ -177,5 +201,16 @@ mod tests {
         };
         let s = cmd.to_string();
         assert_eq!(s, "STREAM udp://10.0.0.25:12345 AAPL,TSLA");
+    }
+
+    #[test]
+    fn parse_stream_response_ok_and_err() {
+        assert!(parse_stream_response_line("OK").is_ok());
+        assert!(parse_stream_response_line(" OK \n").is_ok());
+        assert_eq!(
+            parse_stream_response_line("ERR bad things"),
+            Err("bad things".to_string())
+        );
+        assert!(parse_stream_response_line("nope").is_err());
     }
 }

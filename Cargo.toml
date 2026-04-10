@@ -14,23 +14,18 @@ default-run = "client"
 [dependencies]
 clap = { version = "4.5", features = ["derive"], optional = true }
 ctrlc = { version = "3.4", optional = true }
-serde = { version = "1.0", features = ["derive"], optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+env_logger = "0.11"
 crossbeam-channel = { version = "0.5", optional = true }
 
-# [dev-dependencies]                      # <- секция зависимостей тестов/бенчмарков
-# tempdir = "3.0" 
-
-# [build-dependencies]                    # <- секция зависимостей скриптов сборки
-# cc = "1.0"                              
-
-# [profile.release]                       # <- секция профиля сборки
-# opt-level = 'z' 
+[dev-dependencies]
+rand = "0.8"
 
 [features]
-# CLI is enabled by default; it pulls in clap.
 default = ["cli"]
 cli = ["dep:clap", "dep:ctrlc"]
-serde = ["dep:serde"]
 crossbeam = ["dep:crossbeam-channel"]
 
 [[bin]]

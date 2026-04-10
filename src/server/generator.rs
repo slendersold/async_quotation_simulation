@@ -1,13 +1,11 @@
-//! Генератор котировок: состояние по тикерам и **пакетная выдача** с одним временем.
+//! Генератор котировок: состояние по тикерам, пакетная выдача с общим `timestamp` на весь пакет.
 //!
-//! Каждый «тик» выпуска:
-//! 1. Первый вызов [`QuoteGenerator::advance_batch`] фиксирует стартовые `price`/`volume` для
-//!    всех тикеров и присваивает им **одинаковый** `timestamp`.
-//! 2. Дальше: пересчитываются значения для **всех** тикеров, затем при необходимости
-//!    ожидается остаток до [`QuoteGenerator::emit_interval`], после чего снова выставляется
-//!    единый `timestamp` на весь пакет.
+//! Один цикл выпуска:
+//! 1. Первый [`QuoteGenerator::advance_batch`]: снимок стартовых `price`/`volume` и общий `timestamp`.
+//! 2. Далее: обновление всех тикеров, при необходимости ожидание до `предыдущий_конец + emit_interval`,
+//!    затем новый снимок с единым `timestamp` на пакет.
 //!
-//! Интервал между выпусками задаётся при создании генератора (по умолчанию 1 ms).
+//! Интервал между выпусками задаётся при создании (по умолчанию 1 ms).
 
 use crate::model::StockQuote;
 use super::tickers;
@@ -15,14 +13,14 @@ use std::collections::HashMap;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-// --- Параметры псевдо-ГПСЧ (xorshift64*) ---
+// Параметры ГПСЧ (xorshift64*)
 const XORSHIFT_ZERO_SEED_FALLBACK: u64 = 0x9E3779B97F4A7C15;
 const XORSHIFT_SHIFT_1: u32 = 12;
 const XORSHIFT_SHIFT_2: u32 = 25;
 const XORSHIFT_SHIFT_3: u32 = 27;
 const XORSHIFT_MUL: u64 = 0x2545F4914F6CDD1D;
 
-// --- Параметры бизнес-симуляции котировок ---
+// Параметры симуляции цены и объёма
 const SEED_MIX: u64 = 0xD1B54A32D192ED03;
 
 const DEFAULT_EMIT_INTERVAL: Duration = Duration::from_millis(1);
@@ -99,7 +97,7 @@ fn now_millis() -> u64 {
 pub struct QuoteGenerator {
     emit_interval: Duration,
     rng: XorShift64,
-    /// Порядок обхода тикеров (как в списке при создании) — детерминизм при одном seed.
+    /// Порядок тикеров совпадает с порядком при инициализации (детерминизм при фиксированном seed).
     ticker_order: Vec<String>,
     last_price: HashMap<String, f64>,
     last_volume: HashMap<String, u32>,
@@ -109,7 +107,7 @@ pub struct QuoteGenerator {
 }
 
 impl QuoteGenerator {
-    /// Генератор по `tickers.txt`, случайный seed, интервал выпуска **1 ms**.
+    /// Генератор по `tickers.txt`, случайный seed, интервал выпуска 1 ms.
     pub fn new() -> Self {
         Self::new_for(tickers::all_default())
     }
@@ -171,12 +169,10 @@ impl QuoteGenerator {
         self.emit_interval = interval;
     }
 
-    /// Выпускает следующий пакет: возвращает **единый** `timestamp` миллисекунд с Unix epoch
-    /// для всех котировок этого пакета.
+    /// Выпускает пакет; возвращает общий `timestamp` (мс от Unix epoch) для всех котировок пакета.
     ///
-    /// - Первый вызов: без шага блуждания, только снимок стартовых значений + время.
-    /// - Последующие: шаг для всех тикеров → при необходимости `sleep` до дедлайна
-    ///   `предыдущий_конец + emit_interval` → снимок с новым общим временем.
+    /// Первый вызов — только снимок и время. Последующие — шаг по всем тикерам, ожидание до дедлайна
+    /// `предыдущий_конец + emit_interval`, новый снимок.
     pub fn advance_batch(&mut self) -> u64 {
         if self.last_emit_end.is_none() {
             let ts = now_millis_since_epoch();
@@ -190,7 +186,9 @@ impl QuoteGenerator {
         }
         let after_regen = Instant::now();
 
-        let deadline = self.last_emit_end.unwrap() + self.emit_interval;
+        // Если `last_emit_end` отсутствует, дедлайн совпадает с текущим моментом (без лишнего sleep).
+        let prev_end = self.last_emit_end.unwrap_or(after_regen);
+        let deadline = prev_end + self.emit_interval;
         if let Some(wait) = deadline.checked_duration_since(after_regen) {
             if !wait.is_zero() {
                 thread::sleep(wait);
@@ -203,7 +201,7 @@ impl QuoteGenerator {
         ts
     }
 
-    /// Котировка из последнего выпущенного пакета (тот же `timestamp`, что у остальных в пакете).
+    /// Котировка из последнего пакета по тикеру.
     pub fn last_batch_quote(&self, ticker: &str) -> Option<StockQuote> {
         self.current_batch.get(ticker).cloned()
     }
@@ -242,8 +240,12 @@ impl QuoteGenerator {
     }
 
     fn step_ticker(&mut self, ticker: &str) {
-        let old_price = *self.last_price.get(ticker).expect("ticker in order");
-        let old_volume = *self.last_volume.get(ticker).expect("ticker in order");
+        let (Some(&old_price), Some(&old_volume)) = (
+            self.last_price.get(ticker),
+            self.last_volume.get(ticker),
+        ) else {
+            return;
+        };
 
         let delta_percent = self.rng.next_i32_range(-DELTA_PRICE_BPS, DELTA_PRICE_BPS) as f64
             / DELTA_PRICE_BPS_DENOM;
@@ -351,7 +353,7 @@ mod tests {
         let p1 = generator.last_batch_quote("AAPL").unwrap().price;
         assert!(
             (p1 - p0).abs() > 1e-9,
-            "ожидали шаг блуждания между пакетами"
+            "price should change between batches"
         );
     }
 

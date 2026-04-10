@@ -1,4 +1,4 @@
-//! Логика бинарника `client`: подписка STREAM, приём UDP, TCP-ping.
+//! Клиент: команда STREAM, приём котировок по UDP, опционально TCP PING/PONG.
 
 use std::io;
 use std::path::Path;
@@ -12,7 +12,7 @@ use crate::net;
 use crate::protocol::Command;
 use crate::server::tickers;
 
-/// Подключение по TCP, `STREAM`, приём котировок на UDP с фоновым `PING`.
+/// TCP `STREAM`, приём UDP, фоновая отправка `PING`.
 pub fn start_stream_client(
     tcp_server: &str,
     udp_bind_host: &str,
@@ -27,7 +27,7 @@ pub fn start_stream_client(
         .map_err(Error::from)?;
     let sock = net::udp_bind(udp_addr)?;
     let mut tcp = tcp_command::connect(tcp_server)?;
-    tcp_command::send_command(
+    tcp_command::send_stream_expect_response(
         &mut tcp,
         &Command::Stream {
             udp_addr,
@@ -44,7 +44,11 @@ pub fn start_stream_client(
                 sock,
                 Duration::from_secs(secs),
                 ping_interval,
-                |q| println!("{}", q.to_string()),
+                |q| {
+                    if let Ok(line) = q.to_json_line() {
+                        println!("{line}");
+                    }
+                },
             )
             .map_err(Error::from)?;
         }
@@ -61,7 +65,9 @@ pub fn start_stream_client(
                 ))
             })?;
             udp_recv::receive_quotes_with_ping_until_stop(sock, ping_interval, stop, |q| {
-                println!("{}", q.to_string());
+                if let Ok(line) = q.to_json_line() {
+                    println!("{line}");
+                }
             })
             .map_err(Error::from)?;
         }
@@ -69,7 +75,7 @@ pub fn start_stream_client(
     Ok(())
 }
 
-/// Одна проверка TCP: `PING` / `PONG`.
+/// TCP: отправка `PING`, ожидание `PONG`.
 pub fn start_tcp_ping_client(tcp_server: &str) -> crate::Result<()> {
     let mut tcp = tcp_command::connect(tcp_server)?;
     tcp_command::send_ping_expect_pong(&mut tcp)

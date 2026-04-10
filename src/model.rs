@@ -1,6 +1,11 @@
-//! Модель котировки и (де)сериализация: структуры данных и форматы передачи.
+//! Модель котировки и форматы сериализации.
+//!
+//! Датаграммы UDP с котировкой — одна строка JSON:
+//! `{"ticker":"AAPL","price":...,"volume":...,"timestamp":...}`.
 
-#[derive(Debug, Clone, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StockQuote {
     pub ticker: String,
     pub price: f64,
@@ -38,6 +43,16 @@ impl StockQuote {
         let s = std::str::from_utf8(bytes).ok()?;
         Self::from_string(s)
     }
+
+    /// Сериализация котировки в одну строку JSON для UDP.
+    pub fn to_json_line(&self) -> serde_json::Result<String> {
+        serde_json::to_string(self)
+    }
+
+    /// Разбор JSON-строки котировки из UDP.
+    pub fn from_json_line(s: &str) -> Option<Self> {
+        serde_json::from_str(s.trim()).ok()
+    }
 }
 
 #[cfg(test)]
@@ -48,7 +63,7 @@ mod tests {
 
     static DEMO_TICKERS: &[&str] = &["AAPL", "ZZZ"];
 
-    /// `ticker|price|volume|timestamp` в UTF-8 через `format!` — контроль для [`StockQuote::to_bytes`].
+    /// Эталонная UTF-8 линия `ticker|price|volume|timestamp` для сравнения с [`StockQuote::to_bytes`].
     fn wire_line_bytes_via_format(q: &StockQuote) -> Vec<u8> {
         format!("{}|{}|{}|{}", q.ticker, q.price, q.volume, q.timestamp).into_bytes()
     }
@@ -116,12 +131,12 @@ mod tests {
             assert_eq!(
                 q.to_bytes(),
                 wire_line_bytes_via_format(&q),
-                "to_bytes должен совпадать с UTF-8 строки to_string / format!"
+                "to_bytes vs format! line"
             );
             assert_eq!(
                 q.to_string(),
                 String::from_utf8(q.to_bytes()).unwrap(),
-                "to_string и UTF-8(to_bytes) должны совпадать"
+                "to_string vs utf8(to_bytes)"
             );
         }
     }
@@ -154,5 +169,19 @@ mod tests {
         let line = wire_line_bytes_via_format(&q);
         assert_eq!(StockQuote::from_bytes(&line), Some(q.clone()));
         assert_eq!(StockQuote::from_string(&String::from_utf8(line).unwrap()), Some(q));
+    }
+
+    #[test]
+    fn json_line_roundtrip_includes_expected_fields() {
+        let q = StockQuote {
+            ticker: "AAPL".into(),
+            price: 150.5,
+            volume: 1000,
+            timestamp: 1_700_000_000_000,
+        };
+        let j = q.to_json_line().expect("json");
+        assert!(j.contains("\"ticker\":\"AAPL\""));
+        assert!(j.contains("\"price\"") && j.contains("\"volume\"") && j.contains("\"timestamp\""));
+        assert_eq!(StockQuote::from_json_line(&j), Some(q));
     }
 }

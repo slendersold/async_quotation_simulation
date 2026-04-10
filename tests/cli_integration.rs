@@ -1,7 +1,7 @@
-//! Интеграционные тесты бинарников `server` и `client` (clap, STREAM, tcp-ping).
+//! Интеграционные тесты бинарников `server` и `client`.
 
-use std::io::{BufRead, BufReader};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::io::{BufRead, BufReader, Write};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -50,6 +50,20 @@ fn cli_client_help() {
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("stream"), "{}", s);
     assert!(s.contains("tcp-ping") || s.contains("tcp_ping"), "{}", s);
+
+    let stream_help = Command::new(env!("CARGO_BIN_EXE_client"))
+        .args(["stream", "--help"])
+        .output()
+        .expect("client stream --help");
+    assert!(stream_help.status.success(), "{:?}", stream_help.stderr);
+    let sh = String::from_utf8_lossy(&stream_help.stdout);
+    assert!(
+        sh.contains("server-addr") || sh.contains("server_addr"),
+        "{}",
+        sh
+    );
+    assert!(sh.contains("udp-port") || sh.contains("udp_port"), "{}", sh);
+    assert!(sh.contains("tickers-file") || sh.contains("tickers_file"), "{}", sh);
 }
 
 #[test]
@@ -67,6 +81,34 @@ fn cli_client_stream_fails_on_missing_tickers_file() {
         .output()
         .expect("client stream");
     assert!(!out.status.success());
+}
+
+#[test]
+fn cli_server_returns_err_for_unknown_ticker_stream() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_server"))
+        .args(["--listen", "127.0.0.1:0", "--seed", "42"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn server");
+    let stdout = child.stdout.take().expect("server stdout");
+    let tcp = read_server_ready(stdout);
+    let _guard = KillChild(child);
+
+    let mut stream = TcpStream::connect(tcp).expect("tcp connect");
+    stream
+        .write_all(b"STREAM udp://127.0.0.1:49999 ZZZ_UNKNOWN_TICKER_FOR_ERR_TEST\n")
+        .expect("write STREAM");
+    stream.flush().ok();
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read ERR line");
+    let t = line.trim();
+    assert!(
+        t.to_ascii_uppercase().starts_with("ERR"),
+        "expected ERR … response, got: {t:?}"
+    );
 }
 
 #[test]
@@ -141,7 +183,7 @@ fn cli_stream_udp_127_0_0_1_34254_aapl_tsla_one_second() {
 
     let quotes: Vec<StockQuote> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .filter_map(|line| StockQuote::from_string(line.trim()))
+        .filter_map(|line| StockQuote::from_json_line(line.trim()))
         .collect();
 
     assert!(!quotes.is_empty(), "no quotes on stdout");

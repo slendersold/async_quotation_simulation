@@ -6,10 +6,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::protocol::PING_COMMAND;
+use crate::protocol::{DEFAULT_PING_INTERVAL_SECS, PING_COMMAND};
 
-/// Интервал из ТЗ: клиент шлёт Ping каждые ~2 с.
-pub const DEFAULT_PING_INTERVAL: Duration = Duration::from_secs(2);
+/// Интервал UDP-Ping по умолчанию (~2 с).
+pub const DEFAULT_PING_INTERVAL: Duration = Duration::from_secs(DEFAULT_PING_INTERVAL_SECS);
 
 /// Ячейка, куда при первом UDP-пакете от сервера записывается его адрес (`recv_from`).
 pub type ServerAddrCell = Arc<Mutex<Option<SocketAddr>>>;
@@ -27,8 +27,14 @@ pub fn spawn_udp_ping_loop(
             if stop.load(Ordering::SeqCst) {
                 break;
             }
-            let Some(target) = *server_addr.lock().unwrap() else {
-                continue;
+            let target = {
+                let Ok(guard) = server_addr.lock() else {
+                    continue;
+                };
+                match *guard {
+                    Some(a) => a,
+                    None => continue,
+                }
             };
             let _ = socket.send_to(PING_COMMAND.as_bytes(), target);
         }

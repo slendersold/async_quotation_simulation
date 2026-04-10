@@ -25,7 +25,7 @@ pub fn receive_quotes_with_ping(
     receive_quotes_with_ping_on_socket(socket, run_for, ping_interval)
 }
 
-/// Принимать котировки на уже привязанном сокете (удобно: сначала `bind`, затем TCP `STREAM`).
+/// Приём на уже привязанном сокете (типичный порядок: `bind`, затем TCP `STREAM`).
 ///
 /// Адрес сервера для `PING` берётся из первой успешно разобранной котировки. Строки `PING`/`PONG`
 /// протокола отбрасываются.
@@ -41,7 +41,7 @@ pub fn receive_quotes_with_ping_on_socket(
     Ok(quotes)
 }
 
-/// То же, что [`receive_quotes_with_ping_on_socket`], но каждая котировка отдаётся в `on_quote` (например для CLI).
+/// Вариант [`receive_quotes_with_ping_on_socket`] с колбэком на каждую котировку.
 pub fn receive_quotes_with_ping_on_socket_with_cb(
     socket: UdpSocket,
     run_for: Duration,
@@ -78,8 +78,10 @@ pub fn receive_quotes_with_ping_on_socket_with_cb(
                     Command::Pong | Command::Ping => continue,
                     _ => {}
                 }
-                if let Some(q) = StockQuote::from_string(text) {
-                    let _ = server_addr.lock().unwrap().get_or_insert(src);
+                if let Some(q) = StockQuote::from_json_line(text) {
+                    if let Ok(mut g) = server_addr.lock() {
+                        let _ = g.get_or_insert(src);
+                    }
                     on_quote(&q);
                 }
             }
@@ -101,7 +103,7 @@ pub fn receive_quotes_with_ping_on_socket_with_cb(
     Ok(())
 }
 
-/// Приём до внешнего `stop` (например Ctrl+C): тот же `PING`, общий флаг с фоновым потоком.
+/// Приём до сигнала `stop` (в т.ч. обработчик Ctrl+C): фоновый `PING`, общий `AtomicBool`.
 pub fn receive_quotes_with_ping_until_stop(
     socket: UdpSocket,
     ping_interval: Duration,
@@ -134,8 +136,10 @@ pub fn receive_quotes_with_ping_until_stop(
                     Command::Pong | Command::Ping => continue,
                     _ => {}
                 }
-                if let Some(q) = StockQuote::from_string(text) {
-                    let _ = server_addr.lock().unwrap().get_or_insert(src);
+                if let Some(q) = StockQuote::from_json_line(text) {
+                    if let Ok(mut g) = server_addr.lock() {
+                        let _ = g.get_or_insert(src);
+                    }
                     on_quote(&q);
                 }
             }
