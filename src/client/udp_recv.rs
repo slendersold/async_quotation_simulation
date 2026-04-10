@@ -85,11 +85,7 @@ pub fn receive_quotes_with_ping_on_socket_with_cb(
                     on_quote(&q);
                 }
             }
-            Err(ref e)
-                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
-            {
-                continue;
-            }
+            Err(ref e) if crate::net::is_udp_recv_timeout_or_wouldblock(e) => continue,
             Err(e) => {
                 stop.store(true, Ordering::SeqCst);
                 let _ = ping_handle.join();
@@ -143,11 +139,7 @@ pub fn receive_quotes_with_ping_until_stop(
                     on_quote(&q);
                 }
             }
-            Err(ref e)
-                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
-            {
-                continue;
-            }
+            Err(ref e) if crate::net::is_udp_recv_timeout_or_wouldblock(e) => continue,
             Err(e) => {
                 stop.store(true, Ordering::SeqCst);
                 let _ = ping_handle.join();

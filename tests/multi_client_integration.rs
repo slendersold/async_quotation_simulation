@@ -7,8 +7,7 @@
 //! После завершения всех клиентов: пауза 6 с, затем приём на бывших UDP-портах в течение фиксированного
 //! окна — ожидается отсутствие датаграмм (серверный таймаут отсутствия PING — 5 с).
 
-use std::io::{BufRead, BufReader, ErrorKind};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::UdpSocket;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -16,6 +15,7 @@ use std::time::{Duration, Instant};
 use rand::rngs::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
 use utils::model::StockQuote;
+use utils::net;
 
 const SCENARIO_REPEATS: u32 = 5;
 const N_CLIENTS: usize = 5;
@@ -51,8 +51,7 @@ fn assert_udp_silence_on_client_ports(iteration: u32) {
                                 &buf[..n.min(64)]
                             ));
                         }
-                        Err(e)
-                            if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+                        Err(ref e) if net::is_udp_recv_timeout_or_wouldblock(e) => {}
                         Err(e) => {
                             return Some(format!("port {port}: recv error: {e}"));
                         }
@@ -81,20 +80,6 @@ const CLIENT_TICKERS: [&[&str]; N_CLIENTS] = [
     &["TSLA", "JPM"],
     &["JNJ", "V"],
 ];
-
-fn read_server_ready(stdout: impl std::io::Read) -> SocketAddr {
-    let mut br = BufReader::new(stdout);
-    let mut line = String::new();
-    br.read_line(&mut line).expect("READY line");
-    let rest = line.trim().strip_prefix("READY ").expect("READY prefix");
-    let addr: SocketAddr = rest.parse().expect("socket addr");
-    match addr.ip() {
-        IpAddr::V4(ip) if ip.is_unspecified() => {
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), addr.port())
-        }
-        _ => addr,
-    }
-}
 
 fn tickers_file_content(tickers: &[&str]) -> String {
     tickers.join("\n") + "\n"
@@ -139,7 +124,7 @@ fn five_clients_random_timing_polite_or_kill_five_iterations() {
             .expect("spawn server");
 
         let stdout = server.stdout.take().expect("server stdout");
-        let tcp_addr = read_server_ready(stdout);
+        let tcp_addr = net::read_ready_listen_addr_from_read(stdout).expect("READY line");
         let tcp_str = tcp_addr.to_string();
 
         let handles: Vec<_> = (0..N_CLIENTS)

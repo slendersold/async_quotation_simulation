@@ -18,8 +18,8 @@
 //! 4. Данные: [`crate::server::generator::QuoteGenerator`] в отдельном потоке формирует батчи;
 //!    рассылка подписчикам через каналы и фильтрацию по тикерам перед `send_to`.
 
-use std::io::{self, BufRead, Write};
-use std::net::{SocketAddr, TcpListener, ToSocketAddrs, UdpSocket};
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket};
 
 /// Порт по умолчанию для приёма текстовых команд по TCP (если конфиг не задаёт другой).
 pub const DEFAULT_TCP_COMMAND_PORT: u16 = 9_876;
@@ -63,6 +63,49 @@ pub fn read_command_line(reader: &mut impl BufRead, max_len: usize) -> io::Resul
     String::from_utf8(buf).map(Some).map_err(|e| {
         io::Error::new(io::ErrorKind::InvalidData, e.utf8_error().to_string())
     })
+}
+
+/// Разбор строки старта сервера `READY <addr>` после [`read_command_line`].
+///
+/// Для `0.0.0.0:<port>` возвращает `127.0.0.1:<port>` (loopback для TCP-клиента на той же машине).
+pub fn read_ready_listen_addr(reader: &mut impl BufRead) -> io::Result<SocketAddr> {
+    let Some(line) = read_command_line(reader, MAX_COMMAND_LINE_BYTES)? else {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "missing READY line",
+        ));
+    };
+    let rest = line.trim().strip_prefix("READY ").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "expected line starting with READY ",
+        )
+    })?;
+    let addr: SocketAddr = rest.parse().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid socket address in READY line: {e}"),
+        )
+    })?;
+    Ok(match addr.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => {
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), addr.port())
+        }
+        _ => addr,
+    })
+}
+
+/// Читает `READY` из потока (например `ChildStdout` сервера).
+pub fn read_ready_listen_addr_from_read(reader: impl Read) -> io::Result<SocketAddr> {
+    read_ready_listen_addr(&mut BufReader::new(reader))
+}
+
+/// Ошибка `recv`/`recv_from` на UDP с таймаутом: повторить цикл ожидания.
+pub fn is_udp_recv_timeout_or_wouldblock(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    )
 }
 
 /// Записать строку команды с `\n` и сбросить буфер.
@@ -131,5 +174,19 @@ mod tests {
     fn udp_bind_loopback_ephemeral() {
         let s = udp_bind("127.0.0.1:0").unwrap();
         let _ = s.local_addr().unwrap();
+    }
+
+    #[test]
+    fn read_ready_listen_addr_parses_line() {
+        let mut c = Cursor::new(b"READY 127.0.0.1:9876\n");
+        let a = read_ready_listen_addr(&mut c).unwrap();
+        assert_eq!(a, "127.0.0.1:9876".parse().unwrap());
+    }
+
+    #[test]
+    fn read_ready_listen_addr_maps_unspecified_v4() {
+        let mut c = Cursor::new(b"READY 0.0.0.0:5555\r\n");
+        let a = read_ready_listen_addr(&mut c).unwrap();
+        assert_eq!(a, SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 5555)));
     }
 }

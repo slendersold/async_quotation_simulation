@@ -1,25 +1,12 @@
 //! Интеграционные тесты бинарников `server` и `client`.
 
-use std::io::{BufRead, BufReader, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
+use std::io::{BufReader, Write};
+use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use utils::model::StockQuote;
-
-fn read_server_ready(stdout: impl std::io::Read) -> SocketAddr {
-    let mut br = BufReader::new(stdout);
-    let mut line = String::new();
-    br.read_line(&mut line).expect("READY line");
-    let rest = line.trim().strip_prefix("READY ").expect("READY prefix");
-    let addr: SocketAddr = rest.parse().expect("socket addr");
-    match addr.ip() {
-        IpAddr::V4(ip) if ip.is_unspecified() => {
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), addr.port())
-        }
-        _ => addr,
-    }
-}
+use utils::net;
 
 struct KillChild(std::process::Child);
 impl Drop for KillChild {
@@ -92,7 +79,7 @@ fn cli_server_returns_err_for_unknown_ticker_stream() {
         .spawn()
         .expect("spawn server");
     let stdout = child.stdout.take().expect("server stdout");
-    let tcp = read_server_ready(stdout);
+    let tcp = net::read_ready_listen_addr_from_read(stdout).expect("READY line");
     let _guard = KillChild(child);
 
     let mut stream = TcpStream::connect(tcp).expect("tcp connect");
@@ -102,8 +89,9 @@ fn cli_server_returns_err_for_unknown_ticker_stream() {
     stream.flush().ok();
 
     let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line).expect("read ERR line");
+    let line = net::read_command_line(&mut reader, net::MAX_COMMAND_LINE_BYTES)
+        .expect("read response")
+        .expect("non-empty response");
     let t = line.trim();
     assert!(
         t.to_ascii_uppercase().starts_with("ERR"),
@@ -119,7 +107,7 @@ fn cli_tcp_ping_with_running_server() {
         .spawn()
         .expect("spawn server");
     let stdout = child.stdout.take().expect("server stdout");
-    let tcp = read_server_ready(stdout);
+    let tcp = net::read_ready_listen_addr_from_read(stdout).expect("READY line");
     let _guard = KillChild(child);
 
     let out = Command::new(env!("CARGO_BIN_EXE_client"))
@@ -148,7 +136,7 @@ fn cli_stream_udp_127_0_0_1_34254_aapl_tsla_one_second() {
         .spawn()
         .expect("spawn server");
     let stdout = child.stdout.take().expect("server stdout");
-    let tcp = read_server_ready(stdout);
+    let tcp = net::read_ready_listen_addr_from_read(stdout).expect("READY line");
     let _guard = KillChild(child);
 
     let tick_path: PathBuf = std::env::temp_dir().join(format!("cli_tickers_{}.txt", std::process::id()));

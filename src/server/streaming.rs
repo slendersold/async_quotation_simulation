@@ -1,6 +1,5 @@
 //! Поток UDP-стриминга: приём отфильтрованных пакетов из канала, отправка на клиента, ответ на `PING`.
 
-use std::io;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -68,9 +67,7 @@ pub fn spawn_udp_stream_worker(
                             _ => {}
                         }
                     }
-                    Err(ref e)
-                        if e.kind() == io::ErrorKind::WouldBlock
-                            || e.kind() == io::ErrorKind::TimedOut => {}
+                    Err(ref e) if net::is_udp_recv_timeout_or_wouldblock(e) => {}
                     Err(_) => break,
                 }
             }
